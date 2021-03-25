@@ -1,0 +1,977 @@
+
+R version 4.0.2 (2020-06-22) -- "Taking Off Again"
+Copyright (C) 2020 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin17.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> #===============================================================================
+> #  File:    01-first-stage.R
+> #  Date:    Feb 3, 2021
+> #  Purpose: replicate Fig 2 and paper results re: impact of encouragement on
+> #            visits to news sites (compliance)
+> #  Data In: 
+> #           ./data/survey_data.csv
+> #           ./data/daily_pulse_data.csv
+> #===============================================================================
+> 
+> # PACKAGES
+> #===============================================================================
+> library(dplyr)
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+> library(readr)
+> library(estimatr)
+> library(glmnet)
+Loading required package: Matrix
+Loaded glmnet 4.0-2
+> library(reshape2)
+> library(ggplot2)
+> library(cowplot)
+
+********************************************************
+Note: As of version 1.0.0, cowplot does not change the
+  default ggplot2 theme anymore. To recover the previous
+  behavior, execute:
+  theme_set(theme_cowplot())
+********************************************************
+
+> library(stringr)
+> source('code/functions.r')
+> sessionInfo()
+R version 4.0.2 (2020-06-22)
+Platform: x86_64-apple-darwin17.0 (64-bit)
+Running under: macOS Catalina 10.15.7
+
+Matrix products: default
+BLAS:   /Library/Frameworks/R.framework/Versions/4.0/Resources/lib/libRblas.dylib
+LAPACK: /Library/Frameworks/R.framework/Versions/4.0/Resources/lib/libRlapack.dylib
+
+locale:
+[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+[1] stringr_1.4.0   cowplot_1.0.0   ggplot2_3.3.2   reshape2_1.4.4 
+[5] glmnet_4.0-2    Matrix_1.2-18   estimatr_0.28.0 readr_1.4.0    
+[9] dplyr_1.0.3    
+
+loaded via a namespace (and not attached):
+ [1] Rcpp_1.0.6       plyr_1.8.6       pillar_1.4.7     compiler_4.0.2  
+ [5] tools_4.0.2      iterators_1.0.12 lifecycle_0.2.0  tibble_3.0.6    
+ [9] gtable_0.3.0     lattice_0.20-41  pkgconfig_2.0.3  texreg_1.37.5   
+[13] rlang_0.4.10     foreach_1.5.0    DBI_1.1.0        withr_2.2.0     
+[17] httr_1.4.2       generics_0.1.0   vctrs_0.3.6      hms_1.0.0       
+[21] grid_4.0.2       tidyselect_1.1.0 glue_1.4.2       R6_2.5.0        
+[25] survival_3.1-12  Formula_1.2-3    purrr_0.3.4      blob_1.2.1      
+[29] magrittr_2.0.1   scales_1.1.1     codetools_0.2-16 ellipsis_0.3.1  
+[33] splines_4.0.2    assertthat_0.2.1 shape_1.4.4      colorspace_1.4-1
+[37] stringi_1.5.3    munsell_0.5.0    crayon_1.4.0    
+> 
+> # DATA
+> #===============================================================================
+> pulse <- read_csv("data/daily_pulse_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  date = col_date(format = "")
+)
+ℹ Use `spec()` for the full column specifications.
+
+> svy <- read_csv("data/survey_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  partylean = col_character(),
+  raceeth = col_character(),
+  employ = col_character(),
+  W1_endtime = col_datetime(format = ""),
+  W2_endtime = col_datetime(format = ""),
+  W3_PATA306_treatment_w3 = col_character(),
+  W3_Browser_treatment_w3 = col_character(),
+  starttime_w3 = col_datetime(format = ""),
+  endtime_w3 = col_datetime(format = ""),
+  endtime = col_datetime(format = ""),
+  W5_endtime = col_datetime(format = ""),
+  W6_endtime = col_datetime(format = ""),
+  endtime_w7 = col_datetime(format = ""),
+  endtime_w8 = col_datetime(format = ""),
+  predicted_house_winner_gop = col_logical(),
+  predicted_district_winner_gop = col_logical(),
+  predicted_house_winner_dem = col_logical(),
+  predicted_district_winner_dem = col_logical()
+)
+ℹ Use `spec()` for the full column specifications.
+
+> 
+> # SIZE OF TREATMENT GROUPS
+> #===============================================================================
+> table(svy$W3_PATA306_treatment_w3)
+
+ Control  FoxNews HuffPost 
+     377      361      360 
+> nrow(svy)
+[1] 1339
+> 
+> # SAMPLE SIZE
+> #===============================================================================
+> # respondents who received the encouragement and consented to wave 4
+> sum(!is.na(svy$W3_PATA306_treatment_w3) & !is.na(svy$W4_consent))
+[1] 1037
+> 
+> 
+> # DATA WRANGLING
+> #===============================================================================
+> # Dropping observations where treatment is missing
+> svy <- svy[!is.na(svy$W3_PATA306_treatment_w3),]
+> 
+> # Merge pulse data with survey data
+> pulse <- merge(pulse, 
++                    dplyr::select(svy, id, W3_PATA306_treatment_w3, starttime_w3, W3_Browser_treatment_w3),
++                    by.x = "id", by.y = "id", all.x = TRUE) %>%
++   mutate(treatment = factor(W3_PATA306_treatment_w3, 
++                             labels = c("Control group", "Fox News group", "HuffPost group")),
++          starttime_w3 = as.Date(starttime_w3),
++          timing = as.numeric(date - as.Date("2018-10-05"))) %>%
++   as_tibble()
+> 
+> # FIGURE 2
+> #===============================================================================
+> 
+> pd <- pulse %>% 
++   filter(!is.na(treatment)) %>% # dropping those who are not part of the experiment: NA
++   filter(date!="2018-11-19") %>% # drop the data from 2018-11-19 because of missing data
++   filter(timing >= (-30) & timing <= 50) %>%
++   mutate(week = ifelse(timing>=0, ceiling((timing+1)/7),
++                        floor(timing/7))) %>% 
++   group_by(week, treatment) %>% 
++   summarize(mean_fn = mean(log_fn_day),
++             se_fn = sd(log_fn_day)/sqrt(n()),
++             mean_hp = mean(log_hp_day),
++             se_hp = sd(log_hp_day)/sqrt(n())
++   ) %>% 
++   ungroup()
+`summarise()` has grouped output by 'week'. You can override using the `.groups` argument.
+> plot_data <- merge(
++   melt(pd, id.vars = c("week", "treatment"),
++        mesure.vars = c("mean_fn", "mean_hp"), value.name = "mean",
++        factorsAsStrings = FALSE) %>% 
++     filter(variable %in% c("mean_fn", "mean_hp")) %>% 
++     mutate(variable = ifelse(variable == "mean_fn", "Visits to FoxNews.com",
++                              "Visits to HuffingtonPost.com"))
++   ,
++   melt(pd, id.vars = c("week", "treatment"),
++        mesure.vars = c("se_fn", "se_hp"), value.name = "se",
++        factorsAsStrings = FALSE) %>% 
++     filter(variable %in% c("se_fn", "se_hp")) %>% 
++     mutate(variable = ifelse(variable == "se_fn", "Visits to FoxNews.com",
++                              "Visits to HuffingtonPost.com"))
++ )
+> 
+> p_fn <- plot_data %>%
++   filter(variable == "Visits to FoxNews.com") %>% 
++   ggplot(aes(week, mean, color = treatment, group=treatment)) +
++   scale_x_continuous("Weeks before and after treatment was administered",
++                      limits=c(-4.2, +7.2), 
++                      breaks=c(seq(-4, -1, by=1), seq(1, 7, by=1)),
++                      expand=c(0,0)) +
++   scale_y_continuous("Average count of total web visits per day (log)", limits = c(0, 0.32)) +
++   geom_linerange(aes(ymin=mean-1*se, ymax=mean+1*se, color=treatment), size=1) +
++   geom_linerange(aes(ymin=mean-2*se, ymax=mean+2*se, color=treatment)) +
++   scale_color_manual(values = c("darkgray", "red", "blue")) + 
++   geom_vline(xintercept = 0, lty = 2) +
++   geom_hline(yintercept = 0, alpha=.5) +
++   facet_grid(treatment~variable) +
++   theme_bw() +
++   theme(legend.position="none", panel.grid.major.x=element_blank(),
++         panel.grid.minor.x=element_blank(), axis.title.x = element_blank(),
++         strip.text.y=element_blank())
+> p_fn
+Warning messages:
+1: Removed 2 rows containing missing values (geom_segment). 
+2: Removed 2 rows containing missing values (geom_segment). 
+3: Removed 2 rows containing missing values (geom_segment). 
+4: Removed 2 rows containing missing values (geom_segment). 
+5: Removed 2 rows containing missing values (geom_segment). 
+6: Removed 2 rows containing missing values (geom_segment). 
+> p_hp <- plot_data %>%
++   filter(variable == "Visits to HuffingtonPost.com") %>% 
++   ggplot(aes(week, mean, color = treatment, group=treatment)) +
++   scale_x_continuous("Weeks before and after treatment was administered",
++                      limits=c(-4.2, +7.2), 
++                      breaks=c(seq(-4, -1, by=1), seq(1, 7, by=1)),
++                      expand=c(0,0)) +
++   scale_y_continuous("Average count of total web visits per day (log)", limits = c(0, 0.32)) +
++   geom_linerange(aes(ymin=mean-1*se, ymax=mean+1*se, color=treatment), size=1) +
++   geom_linerange(aes(ymin=mean-2*se, ymax=mean+2*se, color=treatment)) +
++   scale_color_manual("Treatment group", values = c("darkgray", "red", "blue")) + 
++   geom_vline(xintercept = 0, lty = 2) +
++   geom_hline(yintercept = 0, alpha=.5) +
++   facet_grid(treatment~variable) +
++   theme_bw() +
++   theme(legend.position = "none", panel.grid.major.x=element_blank(),
++         panel.grid.minor.x=element_blank(), axis.title = element_blank())
+> p_hp
+Warning messages:
+1: Removed 2 rows containing missing values (geom_segment). 
+2: Removed 2 rows containing missing values (geom_segment). 
+3: Removed 2 rows containing missing values (geom_segment). 
+4: Removed 2 rows containing missing values (geom_segment). 
+5: Removed 2 rows containing missing values (geom_segment). 
+6: Removed 2 rows containing missing values (geom_segment). 
+> 
+> plot_row <- plot_grid(p_fn, p_hp, rel_widths = c(.50, .50))
+There were 12 warnings (use warnings() to see them)
+> 
+> # now add the title
+> title <- ggdraw() + 
++   draw_label(
++     "Weeks before and after treatment was administered",
++     x = .5
++   ) + theme(plot.margin = margin(0, 0, 0, 0))
+> p_all <- plot_grid(
++   plot_row, title,
++   ncol = 1,
++   # rel_heights values control vertical title margins
++   rel_heights = c(1, .1)
++ )
+> 
+> ggsave(p_all, file="graphs/main-fig2.pdf", height=5, width=8)
+> ggsave(p_all, file="graphs/main-fig2.png", height=5, width=8)
+> 
+> 
+> # FIRST STAGE: CHANGE IN VISITS TO FOX NEWS / HUFFINGTON POST
+> #===============================================================================
+> 
+> pd <- pulse %>% 
++   filter(!is.na(treatment)) %>% # dropping those who are not part of the experiment: NA
++   filter(date!="2018-11-19") %>% # drop the data from 2018-11-19 because of missing data
++   filter(timing >= (-30) & timing <= 50) %>%
++   mutate(week = ifelse(timing>=0, ceiling((timing+1)/7),
++                        floor(timing/7))) %>% 
++   filter(week == 1) %>%
++   group_by(id, treatment) %>% 
++   summarize(mean_fn = mean(totalfn_day),
++             mean_hp = mean(totalhp_day),
++   ) %>% 
++   ungroup()
+`summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+> 
+> 
+> # Change in visits in week after encouragement, compared to control
+> pd %>% filter(treatment %in% c("Fox News group", "Control group")) %>% 
++   lm(mean_fn ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = mean_fn ~ treatment, data = .)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+ -3.926  -3.498  -0.330  -0.330 103.788 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)    
+(Intercept)               0.3304     0.5092   0.649    0.517    
+treatmentFox News group   3.5957     0.7164   5.019 7.31e-07 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 7.888 on 483 degrees of freedom
+Multiple R-squared:  0.04957,	Adjusted R-squared:  0.04761 
+F-statistic: 25.19 on 1 and 483 DF,  p-value: 7.308e-07
+
+> 
+> pd %>% filter(treatment %in% c("HuffPost group", "Control group")) %>% 
++   lm(mean_hp ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = mean_hp ~ treatment, data = .)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-1.0815 -0.8047 -0.0467 -0.0467 19.7757 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)    
+(Intercept)              0.04673    0.10530   0.444    0.657    
+treatmentHuffPost group  1.03474    0.14771   7.005 8.26e-12 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 1.631 on 486 degrees of freedom
+Multiple R-squared:  0.09171,	Adjusted R-squared:  0.08984 
+F-statistic: 49.07 on 1 and 486 DF,  p-value: 8.263e-12
+
+> 
+> # FIRST STAGE: CHANGE IN DURATION OF VISITS TO FOX NEWS / HUFFINGTON POST
+> #===============================================================================
+> 
+> pd <- pulse %>% 
++   filter(!is.na(treatment)) %>% # dropping those who are not part of the experiment: NA
++   filter(date!="2018-11-19") %>% # drop the data from 2018-11-19 because of missing data
++   filter(timing >= (-30) & timing <= 50) %>%
++   mutate(week = ifelse(timing>=0, ceiling((timing+1)/7),
++                        floor(timing/7))) %>% 
++   filter(week == 1) %>%
++   group_by(id, treatment) %>% 
++   summarize(meandurfn_week=mean(dur_fn_day),
++             meandurhp_week=mean(dur_hp_day)
++   ) %>% 
++   ungroup()
+`summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+> 
+> # Change in duration of visits to treatment sites after encouragement
+> pd %>% filter(treatment %in% c("Fox News group", "Control group")) %>% 
++   lm(meandurfn_week ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = meandurfn_week ~ treatment, data = .)
+
+Residuals:
+   Min     1Q Median     3Q    Max 
+-148.1 -141.3  -21.8  -21.8 5413.9 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)    
+(Intercept)                21.79      23.65   0.921 0.357265    
+treatmentFox News group   126.35      33.28   3.797 0.000165 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 366.4 on 483 degrees of freedom
+Multiple R-squared:  0.02899,	Adjusted R-squared:  0.02698 
+F-statistic: 14.42 on 1 and 483 DF,  p-value: 0.0001651
+
+> 
+> pd %>% filter(treatment %in% c("HuffPost group", "Control group")) %>% 
++   lm(meandurhp_week ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = meandurhp_week ~ treatment, data = .)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+ -52.25  -51.70   -3.81   -3.81 2351.60 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)    
+(Intercept)                3.814     10.085   0.378 0.705453    
+treatmentHuffPost group   48.438     14.147   3.424 0.000669 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 156.2 on 486 degrees of freedom
+Multiple R-squared:  0.02356,	Adjusted R-squared:  0.02155 
+F-statistic: 11.72 on 1 and 486 DF,  p-value: 0.0006692
+
+> 
+> # CHANGE IN VISITS TO FOX NEWS / HUFFINGTON POST 8 WEEKS AFTER TRTMENT
+> #===============================================================================
+> 
+> pd <- pulse %>% 
++   filter(!is.na(treatment)) %>% # dropping those who are not part of the experiment: NA
++   filter(date!="2018-11-19") %>% # drop the data from 2018-11-19 because of missing data
++   filter(timing >= (-30) & timing <= 50) %>%
++   mutate(week = ifelse(timing>=0, ceiling((timing+1)/7),
++                        floor(timing/7))) %>% 
++   filter(week == 8) %>%
++   group_by(id, treatment) %>% 
++   summarize(mean_fn = mean(totalfn_day),
++             mean_hp = mean(totalhp_day),
++   ) %>% 
++   ungroup()
+`summarise()` has grouped output by 'id'. You can override using the `.groups` argument.
+> 
+> 
+> # Change in visits in week after encouragement, compared to control
+> pd %>% filter(treatment %in% c("Fox News group", "Control group")) %>% 
++   lm(mean_fn ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = mean_fn ~ treatment, data = .)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+ -4.023  -4.023  -0.367  -0.367 107.477 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)   
+(Intercept)               0.3672     0.8245   0.445  0.65633   
+treatmentFox News group   3.6557     1.1586   3.155  0.00173 **
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 11.43 on 387 degrees of freedom
+Multiple R-squared:  0.02508,	Adjusted R-squared:  0.02256 
+F-statistic: 9.955 on 1 and 387 DF,  p-value: 0.00173
+
+> 
+> pd %>% filter(treatment %in% c("HuffPost group", "Control group")) %>% 
++   lm(mean_hp ~ treatment, data=.) %>% summary()
+
+Call:
+lm(formula = mean_hp ~ treatment, data = .)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-0.4362 -0.4362 -0.0938 -0.0938 12.0638 
+
+Coefficients:
+                        Estimate Std. Error t value Pr(>|t|)   
+(Intercept)              0.09375    0.08326   1.126  0.26087   
+treatmentHuffPost group  0.34247    0.11715   2.923  0.00367 **
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 1.154 on 386 degrees of freedom
+Multiple R-squared:  0.02166,	Adjusted R-squared:  0.01913 
+F-statistic: 8.547 on 1 and 386 DF,  p-value: 0.003665
+
+> 
+> # Number of compliers according to pre-registered metric
+> #===============================================================================
+> 
+> (svy %>% 
++   filter(W3_PATA306_treatment_w3=="FoxNews") %>% 
++   summarise(mean(comp_fn, na.rm=TRUE))) - # treated = compliers + always-takers
++ (svy %>% 
++   filter(W3_PATA306_treatment_w3=="Control") %>% 
++   summarise(mean(comp_fn, na.rm=TRUE))) # always-takers
+  mean(comp_fn, na.rm = TRUE)
+1                   0.2896521
+> 
+> (svy %>% 
++     filter(W3_PATA306_treatment_w3=="HuffPost") %>% 
++     summarise(mean(comp_hp, na.rm=TRUE))) - # treated = compliers + always-takers
++   (svy %>% 
++      filter(W3_PATA306_treatment_w3=="Control") %>% 
++      summarise(mean(comp_hp, na.rm=TRUE))) # always-takers
+  mean(comp_hp, na.rm = TRUE)
+1                   0.2793145
+> 
+> # Similar computation but with model
+> lm_robust(comp_fn ~ W3_PATA306_treatment_w3, data = 
++             filter(svy, W3_PATA306_treatment_w3 != "HuffPost"))
+                                Estimate Std. Error  t value     Pr(>|t|)
+(Intercept)                    0.0464135 0.01369450 3.389207 7.588229e-04
+W3_PATA306_treatment_w3FoxNews 0.2896521 0.03325284 8.710597 4.940603e-17
+                                 CI Lower   CI Upper  DF
+(Intercept)                    0.01950478 0.07332222 479
+W3_PATA306_treatment_w3FoxNews 0.22431261 0.35499153 479
+> 
+> lm_robust(comp_hp ~ W3_PATA306_treatment_w3, data = 
++             filter(svy, W3_PATA306_treatment_w3 != "FoxNews"))
+                                  Estimate  Std. Error  t value     Pr(>|t|)
+(Intercept)                     0.02109705 0.009354588 2.255262 2.456841e-02
+W3_PATA306_treatment_w3HuffPost 0.27931448 0.030918545 9.033882 4.105557e-18
+                                  CI Lower   CI Upper  DF
+(Intercept)                     0.00271585 0.03947824 478
+W3_PATA306_treatment_w3HuffPost 0.21856141 0.34006754 478
+> 
+> # % of users who increased visits to assigned site
+> svy %>% 
++   filter(!is.na(log_fn_6w) & !is.na(log_fn_pre)) %>% 
++   # computing raw counts from logs
++   mutate(fn_6w = exp(log_fn_6w) - 1,
++          fn_pre = exp(log_fn_pre) - 1,
++          hp_6w = exp(log_hp_6w) - 1,
++          hp_pre = exp(log_hp_pre) - 1) %>% 
++   group_by(W3_PATA306_treatment_w3) %>% 
++   summarise(fn_increase = mean(fn_6w>fn_pre, na.rm=TRUE),
++             hp_increase = mean(hp_6w>hp_pre, na.rm=TRUE))
+# A tibble: 3 x 3
+  W3_PATA306_treatment_w3 fn_increase hp_increase
+* <chr>                         <dbl>       <dbl>
+1 Control                       0.161      0.108 
+2 FoxNews                       0.569      0.0791
+3 HuffPost                      0.134      0.5   
+> 
+> # FIGURE 3
+> #===============================================================================
+> 
+> # potential control variables across all models
+> vars <- c("party7", "age", "agesq", "female", "raceeth", "educ",
++           "ideo", "income", "employ", "state", "polint", "freq_tv", "freq_np", 
++           "freq_rad", "freq_net", "freq_disc", "log_news_pre", "diet_mean_pre")
+> 
+> ########################################################
+> ### News visits
+> ########################################################
+> 
+> dvs <- c("weekly_log_news_plus1_1w", "weekly_log_news_plus1_4w", 
++          "weekly_log_news_plus1_6w", "log_cons_1w", "weekly_log_cons_4w",
++          "weekly_log_cons_6w", "log_lib_1w", "weekly_log_lib_4w", "weekly_log_lib_6w")
+> 
+> ests <- NULL
+> for(dv in dvs) {
++   dat <- tidy(run_model(dv = dv, trt = "FoxNews")[[1]])[2,]
++   dat$trt <- "Fox News"
++   ests <- rbind(ests, dat)
++   dat <- tidy(run_model(dv = dv)[[1]])[2,]
++   dat$trt <- "HuffPost"
++   ests <- rbind(ests, dat)
++ }
+Estimate: 0.165
+Std. Error: 0.083
+CI Lower: 0.002
+CI Upper: 0.328
+Lasso covariates, Adj R2 = 0.721
+Covariates: log_news_pre
+N = 484
+All covariates, Adj R2 = 0.730
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 400
+Estimate: -0.173
+Std. Error: 0.083
+CI Lower: -0.336
+CI Upper: -0.010
+Lasso covariates, Adj R2 = 0.720
+Covariates: log_news_pre
+N = 491
+All covariates, Adj R2 = 0.717
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+Estimate: 0.089
+Std. Error: 0.072
+CI Lower: -0.052
+CI Upper: 0.230
+Lasso covariates, Adj R2 = 0.742
+Covariates: log_news_pre
+N = 501
+All covariates, Adj R2 = 0.768
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 413
+Estimate: -0.208
+Std. Error: 0.068
+CI Lower: -0.342
+CI Upper: -0.074
+Lasso covariates, Adj R2 = 0.766
+Covariates: log_news_pre
+N = 501
+All covariates, Adj R2 = 0.767
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 409
+Estimate: 0.090
+Std. Error: 0.074
+CI Lower: -0.055
+CI Upper: 0.234
+Lasso covariates, Adj R2 = 0.719
+Covariates: log_news_pre
+N = 502
+All covariates, Adj R2 = 0.738
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 414
+Estimate: -0.164
+Std. Error: 0.071
+CI Lower: -0.303
+CI Upper: -0.025
+Lasso covariates, Adj R2 = 0.736
+Covariates: log_news_pre
+N = 503
+All covariates, Adj R2 = 0.735
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 411
+Estimate: 0.318
+Std. Error: 0.098
+CI Lower: 0.126
+CI Upper: 0.511
+Lasso covariates, Adj R2 = 0.507
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 477
+All covariates, Adj R2 = 0.473
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 400
+Estimate: -0.086
+Std. Error: 0.096
+CI Lower: -0.274
+CI Upper: 0.103
+Lasso covariates, Adj R2 = 0.484
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 482
+All covariates, Adj R2 = 0.448
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+Estimate: 0.256
+Std. Error: 0.087
+CI Lower: 0.085
+CI Upper: 0.426
+Lasso covariates, Adj R2 = 0.517
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 494
+All covariates, Adj R2 = 0.494
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 413
+Estimate: -0.060
+Std. Error: 0.085
+CI Lower: -0.227
+CI Upper: 0.107
+Lasso covariates, Adj R2 = 0.505
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 492
+All covariates, Adj R2 = 0.473
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 409
+Estimate: 0.241
+Std. Error: 0.086
+CI Lower: 0.072
+CI Upper: 0.409
+Lasso covariates, Adj R2 = 0.509
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 495
+All covariates, Adj R2 = 0.483
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 414
+Estimate: -0.055
+Std. Error: 0.085
+CI Lower: -0.222
+CI Upper: 0.111
+Lasso covariates, Adj R2 = 0.495
+Covariates: ideo + log_news_pre + diet_mean_pre
+N = 494
+All covariates, Adj R2 = 0.467
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 411
+Estimate: -0.060
+Std. Error: 0.090
+CI Lower: -0.237
+CI Upper: 0.117
+Lasso covariates, Adj R2 = 0.626
+Covariates: log_news_pre + diet_mean_pre
+N = 484
+All covariates, Adj R2 = 0.627
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 400
+Estimate: -0.133
+Std. Error: 0.093
+CI Lower: -0.314
+CI Upper: 0.049
+Lasso covariates, Adj R2 = 0.621
+Covariates: log_news_pre + diet_mean_pre
+N = 491
+All covariates, Adj R2 = 0.608
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+Estimate: -0.063
+Std. Error: 0.079
+CI Lower: -0.218
+CI Upper: 0.092
+Lasso covariates, Adj R2 = 0.656
+Covariates: log_news_pre + diet_mean_pre
+N = 501
+All covariates, Adj R2 = 0.678
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 413
+Estimate: -0.162
+Std. Error: 0.079
+CI Lower: -0.317
+CI Upper: -0.007
+Lasso covariates, Adj R2 = 0.667
+Covariates: log_news_pre + diet_mean_pre
+N = 501
+All covariates, Adj R2 = 0.663
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 409
+Estimate: -0.053
+Std. Error: 0.080
+CI Lower: -0.210
+CI Upper: 0.104
+Lasso covariates, Adj R2 = 0.638
+Covariates: log_news_pre + diet_mean_pre
+N = 502
+All covariates, Adj R2 = 0.663
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 414
+Estimate: -0.121
+Std. Error: 0.080
+CI Lower: -0.277
+CI Upper: 0.036
+Lasso covariates, Adj R2 = 0.646
+Covariates: log_news_pre + diet_mean_pre
+N = 503
+All covariates, Adj R2 = 0.638
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 411
+> 
+> rownames(ests) <- NULL
+> ests <- ests %>% select(estimate, conf.low, conf.high, std.error, p.value, outcome, trt)
+> 
+> ########################################################
+> ### Twitter link shares (lib)
+> ########################################################
+> 
+> # creating Twitter variables
+> svy$log_lib_links <- log(svy$lib_links+1)
+> svy$log_lib_links_pre <- log(svy$lib_links_pre+1)
+> svy$log_total_links_pre <- log(svy$total_links_pre+1)
+> 
+> trt <- "HuffPost"
+> dv <- "log_lib_links"
+> dv_pre <- "log_lib_links_pre"
+> D <- "comp_hp"
+> 
+> # using chrome vs others as blocks here
+> svy$chrome <- ifelse(svy$W3_Browser_treatment_w3=="Chrome", 1, 0)
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = chrome, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.01282195  0.1905248 0.06729803 0.946447
+                                  CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.3640816 0.3897255 131
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, blocks="chrome", more_vars="log_total_links_pre")
+Estimate: 0.059
+Std. Error: 0.068
+CI Lower: -0.076
+CI Upper: 0.194
+Pre-treatment DV, Adj R2 = 0.862
+N = 135
+Lasso covariates, Adj R2 = 0.862
+Covariates: log_lib_links_pre
+N = 135
+All covariates, Adj R2 = 0.854
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 89
+> compute_proportion_missing_covars(itt)
+0.0% missing
+> 
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> dat <- cace %>% tidy() %>% filter(term == "comp_hp") %>% dplyr::select(estimate, conf.low, conf.high, std.error, p.value)
+> dat$outcome <- "Link shares on Twitter"
+> dat$trt <- "HuffPost"
+> ests <- rbind(ests, dat)
+> 
+> ########################################################
+> ### Twitter link shares (cons)
+> ########################################################
+> 
+> # creating Twitter variables
+> svy$log_cons_links <- log(svy$cons_links+1)
+> svy$log_cons_links_pre <- log(svy$cons_links_pre+1)
+> svy$log_total_links_pre <- log(svy$total_links_pre+1)
+> 
+> trt <- "FoxNews"
+> dv <- "log_cons_links"
+> dv_pre <- "log_cons_links_pre"
+> D <- "comp_fn"
+> 
+> # using chrome vs others as blocks here
+> svy$chrome <- ifelse(svy$W3_Browser_treatment_w3=="Chrome", 1, 0)
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = chrome, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.216833  0.1753889 -1.236298 0.2190053
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.5644482 0.1307822 109
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, 
++                  blocks="chrome", more_vars = "log_total_links_pre")
+Estimate: 0.019
+Std. Error: 0.086
+CI Lower: -0.151
+CI Upper: 0.190
+Pre-treatment DV, Adj R2 = 0.801
+N = 113
+Lasso covariates, Adj R2 = 0.801
+Covariates: log_cons_links_pre
+N = 113
+All covariates, Adj R2 = 0.710
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 70
+> compute_proportion_missing_covars(itt)
+0.0% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> dat <- cace %>% tidy() %>% filter(term == "comp_fn") %>% 
++   dplyr::select(estimate, conf.low, conf.high, std.error, p.value)
+> dat$outcome <- "Link shares on Twitter"
+> dat$trt <- "Fox News"
+> ests <- rbind(ests, dat)
+> 
+> ########################################################
+> ### Event knowledge: HP group
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "event_mokken"
+> dv_pre <- "event_pre_mokken"
+> D <- "comp_hp"
+> 
+> # standardizing event knowledge variable
+> svy$event_mokken <- svy$event_mokken/
++   sd(svy$event_mokken[which(
++     svy$W3_PATA306_treatment_w3 == "Control")], na.rm = TRUE)
+> 
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt, dv_pre = dv_pre)
+Estimate: 0.146
+Std. Error: 0.073
+CI Lower: 0.002
+CI Upper: 0.289
+Pre-treatment DV, Adj R2 = 0.137
+N = 696
+Lasso covariates, Adj R2 = 0.203
+Covariates: polint + log_news_pre + event_pre_mokken
+N = 533
+All covariates, Adj R2 = 0.220
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 458
+> 
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> dat <- cace %>% tidy() %>% filter(term == "comp_hp") %>% dplyr::select(estimate, conf.low, conf.high, std.error, p.value)
+> dat$outcome <- "Event knowledge"
+> dat$trt <- "HuffPost"
+> ests <- rbind(ests, dat)
+> 
+> 
+> ########################################################
+> ### Event knowledge: FN group
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "event_mokken"
+> dv_pre <- "event_pre_mokken"
+> D <- "comp_fn"
+> 
+> # standardizing event knowledge variable
+> svy$event_mokken <- svy$event_mokken/
++   sd(svy$event_mokken[which(
++     svy$W3_PATA306_treatment_w3 == "Control")], na.rm = TRUE)
+> 
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt, dv_pre = dv_pre)
+Estimate: 0.240
+Std. Error: 0.072
+CI Lower: 0.098
+CI Upper: 0.381
+Pre-treatment DV, Adj R2 = 0.154
+N = 696
+Lasso covariates, Adj R2 = 0.242
+Covariates: polint + log_news_pre + event_pre_mokken
+N = 534
+All covariates, Adj R2 = 0.277
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 463
+> 
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> dat <- cace %>% tidy() %>% filter(term == "comp_fn") %>% 
++   dplyr::select(estimate, conf.low, conf.high, std.error, p.value)
+> dat$outcome <- "Event knowledge"
+> dat$trt <- "Fox News"
+> ests <- rbind(ests, dat)
+> 
+> ########################################################
+> ### Producing graph
+> ########################################################
+> 
+> ests$type <- str_sub(ests$outcome, 1, -4)
+> ests$type <- str_remove(ests$type, "weekly_")
+> ests$type <- c("News visits", "Conservative news visits", "Liberal news visits", 
++                "Liberal/conservative\n link shares on Twitter", "Event knowledge")[match(ests$type, unique(ests$type))]
+> ests$outcome[seq(1, 21, by = 2)] <- c("1 week", "4 weeks", "6 weeks",
++                                       "1 week", "4 weeks", "6 weeks", 
++                                       "1 week", "4 weeks", "6 weeks", "4 weeks", "Wave 4")
+> ests$outcome[seq(2, 22, by = 2)] <- c("1 week", "4 weeks", "6 weeks",
++                                       "1 week", "4 weeks", "6 weeks", 
++                                       "1 week", "4 weeks", "6 weeks", "4 weeks", "Wave 4")
+> 
+> ests$type <- factor(ests$type, levels = c("News visits", "Conservative news visits", "Liberal news visits", 
++                                           "Liberal/conservative\n link shares on Twitter", "Event knowledge"))
+> 
+> g <- ggplot(data = filter(ests), aes(y=estimate, x=outcome, color=trt)) + 
++   facet_grid(~ type, scales = "free_x") +
++   geom_hline(yintercept = 0, colour = gray(1/2), lty = 2) + 
++   geom_pointrange(aes(y = estimate, 
++                       ymin = conf.low,
++                       ymax = conf.high), position=position_dodge(width=-.5))+
++   scale_color_manual("Treatment", values=c("red", "blue")) +
++   ylim(-.7, 1.5) + xlab("") + ylab("") +
++   theme_minimal() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45))
+> g
+Warning messages:
+1: position_dodge requires non-overlapping x intervals 
+2: position_dodge requires non-overlapping x intervals 
+3: position_dodge requires non-overlapping x intervals 
+4: position_dodge requires non-overlapping x intervals 
+5: position_dodge requires non-overlapping x intervals 
+> 
+> ggsave(g, file = "graphs/main-fig3.pdf", width = 10, height = 6)
+Warning messages:
+1: position_dodge requires non-overlapping x intervals 
+2: position_dodge requires non-overlapping x intervals 
+3: position_dodge requires non-overlapping x intervals 
+4: position_dodge requires non-overlapping x intervals 
+5: position_dodge requires non-overlapping x intervals 
+> ggsave(g, file = "graphs/main-fig3.png", width = 10, height = 6)
+Warning messages:
+1: position_dodge requires non-overlapping x intervals 
+2: position_dodge requires non-overlapping x intervals 
+3: position_dodge requires non-overlapping x intervals 
+4: position_dodge requires non-overlapping x intervals 
+5: position_dodge requires non-overlapping x intervals 
+> 
+> # results highlighted in manuscript text
+> ests %>% filter(trt == "Fox News" & 
++                   type == "Conservative news visits")
+   estimate   conf.low conf.high  std.error     p.value outcome      trt
+1 0.3183319 0.12599493 0.5106688 0.09787414 0.001228433  1 week Fox News
+2 0.2556691 0.08488744 0.4264508 0.08691356 0.003423878 4 weeks Fox News
+3 0.2406956 0.07214317 0.4092479 0.08577949 0.005221504 6 weeks Fox News
+                      type
+1 Conservative news visits
+2 Conservative news visits
+3 Conservative news visits
+> 
+> proc.time()
+   user  system elapsed 
+  7.132   0.491   7.738 

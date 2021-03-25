@@ -1,0 +1,2086 @@
+
+R version 4.0.2 (2020-06-22) -- "Taking Off Again"
+Copyright (C) 2020 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin17.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> #===============================================================================
+> #  File:    06-additional-results.R
+> #  Date:    Feb 3, 2021
+> #  Purpose: replicate appendix analyses: Sections 5 and 6
+> #  Data In: 
+> #           ./data/survey_data.csv
+> #           ./data/daily_pulse_data.csv
+> #===============================================================================
+> 
+> # PACKAGES
+> #===============================================================================
+> library(tidyverse)
+── Attaching packages ─────────────────────────────────────── tidyverse 1.3.0 ──
+✔ ggplot2 3.3.2     ✔ purrr   0.3.4
+✔ tibble  3.0.6     ✔ dplyr   1.0.3
+✔ tidyr   1.1.2     ✔ stringr 1.4.0
+✔ readr   1.4.0     ✔ forcats 0.5.1
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+> library(estimatr)
+> library(glmnet)
+Loading required package: Matrix
+
+Attaching package: ‘Matrix’
+
+The following objects are masked from ‘package:tidyr’:
+
+    expand, pack, unpack
+
+Loaded glmnet 4.0-2
+> library(powerLATE)
+powerLATE: Generalized Power Analysis for LATE
+Version: 0.1.1
+Reference: Bansak, K. (2020). A Generalized Approach to Power Analysis for Local Average Treatment Effects. Statistical Science, 35(2), 254-271.
+
+> library(haven)
+> source('code/functions.r')
+> 
+> # DATA
+> #===============================================================================
+> pulse <- read_csv("data/daily_pulse_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  date = col_date(format = "")
+)
+ℹ Use `spec()` for the full column specifications.
+
+> svy <- read_csv("data/survey_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  partylean = col_character(),
+  raceeth = col_character(),
+  employ = col_character(),
+  W1_endtime = col_datetime(format = ""),
+  W2_endtime = col_datetime(format = ""),
+  W3_PATA306_treatment_w3 = col_character(),
+  W3_Browser_treatment_w3 = col_character(),
+  starttime_w3 = col_datetime(format = ""),
+  endtime_w3 = col_datetime(format = ""),
+  endtime = col_datetime(format = ""),
+  W5_endtime = col_datetime(format = ""),
+  W6_endtime = col_datetime(format = ""),
+  endtime_w7 = col_datetime(format = ""),
+  endtime_w8 = col_datetime(format = ""),
+  predicted_house_winner_gop = col_logical(),
+  predicted_district_winner_gop = col_logical(),
+  predicted_house_winner_dem = col_logical(),
+  predicted_district_winner_dem = col_logical()
+)
+ℹ Use `spec()` for the full column specifications.
+
+> 
+> # Dropping observations where treatment is missing
+> svy <- svy[!is.na(svy$W3_PATA306_treatment_w3),]
+> 
+> # Analysis ----------------------------------------------------------------
+> 
+> # https://declaredesign.org/blog/biased-fixed-effects.html
+> 
+> vars <- c("party7", "age", "agesq", "female", "raceeth", "educ",
++           "ideo", "income", "employ", "state", "polint", "freq_tv", "freq_np", 
++           "freq_rad", "freq_net", "freq_disc", "log_news_pre", "diet_mean_pre")
+> 
+> ########################################################
+> ### Issue H1: issue opinions, Fox News treatment
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "issue_scale_w5"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.02020224 0.09092477 -0.2221863 0.824262
+                                 CI Lower CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1988555 0.158451 487
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: -0.055
+Std. Error: 0.038
+CI Lower: -0.130
+CI Upper: 0.019
+Pre-treatment DV, Adj R2 = 0.815
+N = 499
+Lasso covariates, Adj R2 = 0.834
+Covariates: party7 + ideo + issue_scale_pre
+N = 489
+All covariates, Adj R2 = 0.843
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 332
+> compute_proportion_missing_covars(itt)
+2.0% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.179 (17.8% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre
+0.075 (7.4% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1: Conservatism")
+H1: Conservatism & -0.020 (0.091) & -0.055 (0.038) & -0.197 (0.176) & 0.075\\ 
+(FoxNews) & [-0.199, 0.158] & [-0.130, 0.019] & [-0.543, 0.149] & ($d$=0.074)\\
+> 
+> 
+> 
+> ########################################################
+> ### Issue H2: issue opinions, HuffPost treatment
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "issue_scale_w5"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.02446235  0.0884149 0.2766768 0.7821389
+                                  CI Lower CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.1492343 0.198159 517
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: -0.037
+Std. Error: 0.036
+CI Lower: -0.107
+CI Upper: 0.033
+Pre-treatment DV, Adj R2 = 0.822
+N = 529
+Lasso covariates, Adj R2 = 0.841
+Covariates: party7 + ideo + issue_scale_pre
+N = 518
+All covariates, Adj R2 = 0.833
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 356
+> compute_proportion_missing_covars(itt)
+2.0% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.174 (17.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre
+0.073 (7.2% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H2: Conservatism")
+H2: Conservatism & 0.024 (0.088) & -0.037 (0.036) & -0.183 (0.163) & 0.073\\ 
+(HuffPost) & [-0.149, 0.198] & [-0.107, 0.033] & [-0.503, 0.137] & ($d$=0.072)\\
+> 
+> ########################################################
+> ### Issue H3: immigration attitudes, FoxNews treatment
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "imm_issue_scale_w5"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                Estimate Std. Error  t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews 0.0423418 0.07680745 0.551272 0.5816316
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1084713 0.1931549 668
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, more_vars = "policy14_imm_pre")
+Estimate: -0.004
+Std. Error: 0.034
+CI Lower: -0.072
+CI Upper: 0.063
+Pre-treatment DV, Adj R2 = 0.424
+N = 680
+Lasso covariates, Adj R2 = 0.807
+Covariates: party7 + ideo + issue_scale_pre + policy14_imm_pre
+N = 664
+All covariates, Adj R2 = 0.629
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+> compute_proportion_missing_covars(itt)
+2.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.151 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre + policy14_imm_pre
+0.068 (6.8% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H3: Pro-immigration")
+H3: Pro-immigration & 0.042 (0.077) & -0.004 (0.034) & 0.169 (0.148) & 0.068\\ 
+(FoxNews) & [-0.108, 0.193] & [-0.072, 0.063] & [-0.123, 0.460] & ($d$=0.068)\\
+> 
+> ########################################################
+> ### Issue H4: immigration attitudes, HuffPost treatment
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "imm_issue_scale_w5"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                 Estimate Std. Error  t value   Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.1770493 0.07524224 2.353057 0.01890705
+                                  CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost 0.02931109 0.3247874 672
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, more_vars = "policy14_imm_pre")
+Estimate: 0.012
+Std. Error: 0.035
+CI Lower: -0.056
+CI Upper: 0.080
+Pre-treatment DV, Adj R2 = 0.464
+N = 684
+Lasso covariates, Adj R2 = 0.811
+Covariates: party7 + ideo + issue_scale_pre + policy14_imm_pre
+N = 662
+All covariates, Adj R2 = 0.675
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 439
+> compute_proportion_missing_covars(itt)
+2.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.151 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre + policy14_imm_pre
+0.068 (6.8% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4: Pro-immigration")
+H4: Pro-immigration & 0.177 (0.075) & 0.012 (0.035) & 0.227 (0.167) & 0.068\\ 
+(HuffPost) & [0.029, 0.325] & [-0.056, 0.080] & [-0.101, 0.555] & ($d$=0.068)\\
+> 
+> ########################################################
+> ### Issue RQ1: heterogeneous treatment effects
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.815
+N = 499
+Lasso covariates, Adj R2 = 0.834
+Covariates: party7 + ideo + issue_scale_pre
+N = 489
+All covariates, Adj R2 = 0.843
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 332
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.815
+N = 499
+Lasso covariates, Adj R2 = 0.834
+Covariates: party7 + ideo + issue_scale_pre
+N = 489
+All covariates, Adj R2 = 0.843
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 332
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H2
+> heterogeneous_effect(dv = "issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.822
+N = 529
+Lasso covariates, Adj R2 = 0.841
+Covariates: party7 + ideo + issue_scale_pre
+N = 518
+All covariates, Adj R2 = 0.833
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 356
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.822
+N = 529
+Lasso covariates, Adj R2 = 0.841
+Covariates: party7 + ideo + issue_scale_pre
+N = 518
+All covariates, Adj R2 = 0.833
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 356
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> # H3
+> heterogeneous_effect(dv = "imm_issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.424
+N = 680
+Lasso covariates, Adj R2 = 0.598
+Covariates: party7 + ideo + issue_scale_pre
+N = 664
+All covariates, Adj R2 = 0.629
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "imm_issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.424
+N = 680
+Lasso covariates, Adj R2 = 0.598
+Covariates: party7 + ideo + issue_scale_pre
+N = 664
+All covariates, Adj R2 = 0.629
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H4
+> heterogeneous_effect(dv = "imm_issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.464
+N = 684
+Lasso covariates, Adj R2 = 0.627
+Covariates: party7 + ideo + issue_scale_pre
+N = 662
+All covariates, Adj R2 = 0.675
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 439
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "imm_issue_scale_w5", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.464
+N = 684
+Lasso covariates, Adj R2 = 0.627
+Covariates: party7 + ideo + issue_scale_pre
+N = 662
+All covariates, Adj R2 = 0.675
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 439
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> 
+> ########################################################
+> ### Agenda H1: FoxNews treatment
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "agenda_lean_w5"
+> dv_pre <- "agenda_lean_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.00409574 0.01570628 -0.2607708 0.7943507
+                                  CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.03493613 0.02674465 659
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.004
+Std. Error: 0.009
+CI Lower: -0.013
+CI Upper: 0.021
+Pre-treatment DV, Adj R2 = 0.651
+N = 670
+Lasso covariates, Adj R2 = 0.718
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 654
+All covariates, Adj R2 = 0.740
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 430
+> compute_proportion_missing_covars(itt)
+2.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.031 (15.3% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre + agenda_lean_pre
+0.016 (8.0% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1: Agenda setting")
+H1: Agenda setting & -0.004 (0.016) & 0.004 (0.009) & 0.009 (0.036) & 0.016\\ 
+(FoxNews) & [-0.035, 0.027] & [-0.013, 0.021] & [-0.063, 0.081] & ($d$=0.080)\\
+> 
+> ########################################################
+> ### Agenda H2: HuffPost treatment
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "agenda_lean_w5"
+> dv_pre <- "agenda_lean_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error  t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.02477056 0.01543896 1.604419 0.1090959
+                                    CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.005544342 0.05508546 666
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.006
+Std. Error: 0.008
+CI Lower: -0.010
+CI Upper: 0.022
+Pre-treatment DV, Adj R2 = 0.684
+N = 677
+Lasso covariates, Adj R2 = 0.734
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 655
+All covariates, Adj R2 = 0.764
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 433
+> compute_proportion_missing_covars(itt)
+2.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.031 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre + agenda_lean_pre
+0.016 (8.0% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace,  trt, pwr,
++               dv = "H2: Agenda setting")
+H2: Agenda setting & 0.025 (0.015) & 0.006 (0.008) & 0.001 (0.037) & 0.016\\ 
+(HuffPost) & [-0.006, 0.055] & [-0.010, 0.022] & [-0.072, 0.074] & ($d$=0.080)\\
+> 
+> ########################################################
+> ### Agenda RQ1: heterogeneous treatment effects by party ID / ideology
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "agenda_lean_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.651
+N = 670
+Lasso covariates, Adj R2 = 0.718
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 654
+All covariates, Adj R2 = 0.740
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 430
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "agenda_lean_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.651
+N = 670
+Lasso covariates, Adj R2 = 0.718
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 654
+All covariates, Adj R2 = 0.740
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 430
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> 
+> # H2
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "agenda_lean_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.684
+N = 677
+Lasso covariates, Adj R2 = 0.734
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 655
+All covariates, Adj R2 = 0.764
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 433
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "agenda_lean_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.684
+N = 677
+Lasso covariates, Adj R2 = 0.734
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 655
+All covariates, Adj R2 = 0.764
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 433
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> ########################################################
+> ### Agenda RQ2: heterogeneous treatment effects by pre-treatment habits
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "log_fn_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.111
+N = 522
+Lasso covariates, Adj R2 = 0.564
+Covariates: party7 + I(raceeth=='Black') + educ + ideo + diet_mean_pre
+N = 655
+All covariates, Adj R2 = 0.608
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 430
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H2
+> heterogeneous_effect(dv = "agenda_lean_w5", dv_pre = "log_hp_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.029
+N = 525
+Lasso covariates, Adj R2 = 0.606
+Covariates: party7 + I(raceeth=='Black') + educ + ideo + freq_np + diet_mean_pre + log_hp_pre
+N = 504
+All covariates, Adj R2 = 0.625
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 433
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> 
+> ########################################################
+> ### Approval H1a: President
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "trump_approve_w5"
+> dv_pre <- "trump_approve_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.02777922   0.135077 -0.2056546 0.8371236
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.2930081 0.2374496 665
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.015
+Std. Error: 0.038
+CI Lower: -0.059
+CI Upper: 0.090
+Pre-treatment DV, Adj R2 = 0.920
+N = 677
+Lasso covariates, Adj R2 = 0.922
+Covariates: party7 + trump_approve_pre
+N = 675
+All covariates, Adj R2 = 0.923
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+> compute_proportion_missing_covars(itt)
+0.5% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.265 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + trump_approve_pre
+0.075 (4.3% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1a: Pres. approval")
+H1a: Pres. approval & -0.028 (0.135) & 0.015 (0.038) & -0.068 (0.157) & 0.075\\ 
+(FoxNews) & [-0.293, 0.237] & [-0.059, 0.090] & [-0.376, 0.240] & ($d$=0.043)\\
+> 
+> 
+> ########################################################
+> ### Approval H2a: President
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "trump_approve_w5"
+> dv_pre <- "trump_approve_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error  t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost -0.1931931  0.1309349 -1.47549 0.1405486
+                                  CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.4502831 0.06389691 673
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.024
+Std. Error: 0.039
+CI Lower: -0.053
+CI Upper: 0.100
+Pre-treatment DV, Adj R2 = 0.910
+N = 685
+Lasso covariates, Adj R2 = 0.916
+Covariates: party7 + trump_approve_pre
+N = 680
+All covariates, Adj R2 = 0.922
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+> compute_proportion_missing_covars(itt)
+0.5% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.264 (15.1% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + trump_approve_pre
+0.075 (4.3% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H2a: Pres. approval")
+H2a: Pres. approval & -0.193 (0.131) & 0.024 (0.039) & -0.008 (0.182) & 0.075\\ 
+(HuffPost) & [-0.450, 0.064] & [-0.053, 0.100] & [-0.366, 0.351] & ($d$=0.043)\\
+> 
+> 
+> ########################################################
+> ### Approval RQ1: heterogeneous treatment effects by party ID / ideology
+> ########################################################
+> 
+> # H1a
+> heterogeneous_effect(dv = "trump_approve_w5", dv_pre = "trump_approve_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.920
+N = 677
+Lasso covariates, Adj R2 = 0.922
+Covariates: party7 + trump_approve_pre
+N = 675
+All covariates, Adj R2 = 0.923
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "trump_approve_w5", dv_pre = "trump_approve_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.920
+N = 677
+Lasso covariates, Adj R2 = 0.922
+Covariates: party7 + trump_approve_pre
+N = 675
+All covariates, Adj R2 = 0.923
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> 
+> # H2a
+> heterogeneous_effect(dv = "trump_approve_w5", dv_pre = "trump_approve_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.910
+N = 685
+Lasso covariates, Adj R2 = 0.916
+Covariates: party7 + trump_approve_pre
+N = 680
+All covariates, Adj R2 = 0.922
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "trump_approve_w5", dv_pre = "trump_approve_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.910
+N = 685
+Lasso covariates, Adj R2 = 0.916
+Covariates: party7 + trump_approve_pre
+N = 680
+All covariates, Adj R2 = 0.922
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> ########################################################
+> ### Turnout RQ1a: Fox News
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "vote_after"
+> dv_pre <- "vote_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.03638737 0.02777612 -1.310024 0.1906022
+                                  CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.09091847 0.01814373 726
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: -0.031
+Std. Error: 0.024
+CI Lower: -0.079
+CI Upper: 0.017
+Pre-treatment DV, Adj R2 = 0.233
+N = 738
+Lasso covariates, Adj R2 = 0.233
+Covariates: vote_pre
+N = 738
+All covariates, Adj R2 = 0.290
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 463
+> compute_proportion_missing_covars(itt)
+0.0% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.053 (14.6% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + vote_pre
+0.047 (12.9% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "RQ1a: Turnout")
+RQ1a: Turnout & -0.036 (0.028) & -0.031 (0.024) & -0.120 (0.099) & 0.047\\ 
+(FoxNews) & [-0.091, 0.018] & [-0.079, 0.017] & [-0.315, 0.076] & ($d$=0.129)\\
+> 
+> ########################################################
+> ### Turnout RQ1a: Huff Post
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "vote_after"
+> dv_pre <- "vote_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error  t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.03570053 0.02517407 1.418147 0.1565775
+                                   CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.01372224 0.0851233 725
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.026
+Std. Error: 0.022
+CI Lower: -0.018
+CI Upper: 0.070
+Pre-treatment DV, Adj R2 = 0.220
+N = 737
+Lasso covariates, Adj R2 = 0.220
+Covariates: vote_pre
+N = 737
+All covariates, Adj R2 = 0.254
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 458
+> compute_proportion_missing_covars(itt)
+0.0% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.053 (14.6% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + vote_pre
+0.047 (12.9% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "RQ1b: Turnout")
+RQ1b: Turnout & 0.036 (0.025) & 0.026 (0.022) & 0.102 (0.090) & 0.047\\ 
+(HuffPost) & [-0.014, 0.085] & [-0.018, 0.070] & [-0.075, 0.279] & ($d$=0.129)\\
+> 
+> ########################################################
+> ### Media Trust H1a: Trust in Fox News for FN treatment
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "trust_fox_w5"
+> dv_pre <- ""
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.04353784 0.08429658 -0.516484 0.6056876
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.2090564 0.1219808 667
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.058
+Std. Error: 0.061
+CI Lower: -0.178
+CI Upper: 0.063
+Lasso covariates, Adj R2 = 0.497
+Covariates: party7 + ideo + diet_mean_pre
+N = 663
+All covariates, Adj R2 = 0.526
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+> compute_proportion_missing_covars(itt)
+2.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.167 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre
+0.121 (11.0% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1a: Trust in Fox News")
+H1a: Trust in Fox News & -0.044 (0.084) & -0.058 (0.061) & -0.192 (0.268) & 0.121\\ 
+(FoxNews) & [-0.209, 0.122] & [-0.178, 0.063] & [-0.718, 0.334] & ($d$=0.110)\\
+> 
+> ########################################################
+> ### Media Trust H1b: Trust in HuffPost for FN treatment
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "trust_hp_w5"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.04214034  0.0711368 -0.5923846 0.5537954
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1818213 0.0975406 662
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.039
+Std. Error: 0.059
+CI Lower: -0.154
+CI Upper: 0.077
+Lasso covariates, Adj R2 = 0.347
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.393
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 434
+> compute_proportion_missing_covars(itt)
+2.7% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.143 (15.3% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre
+0.117 (12.5% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1b: Trust in HuffPost")
+H1b: Trust in HuffPost & -0.042 (0.071) & -0.039 (0.059) & -0.183 (0.254) & 0.117\\ 
+(FoxNews) & [-0.182, 0.098] & [-0.154, 0.077] & [-0.682, 0.316] & ($d$=0.125)\\
+> 
+> ########################################################
+> ### Media Trust H2a: Trust in HuffPost for HP treatment
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "trust_hp_w5"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                 Estimate Std. Error  t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.1100899  0.0725655 1.517111 0.1297123
+                                   CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.03239436 0.2525743 667
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: 0.018
+Std. Error: 0.061
+CI Lower: -0.102
+CI Upper: 0.138
+Lasso covariates, Adj R2 = 0.353
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.397
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+> compute_proportion_missing_covars(itt)
+2.7% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.142 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre
+0.117 (12.5% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H2a: Trust in HuffPost")
+H2a: Trust in HuffPost & 0.110 (0.073) & 0.018 (0.061) & -0.094 (0.282) & 0.117\\ 
+(HuffPost) & [-0.032, 0.253] & [-0.102, 0.138] & [-0.647, 0.460] & ($d$=0.125)\\
+> 
+> ########################################################
+> ### Media Trust H2b: Trust in Fox News for HP treatment
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "trust_fox_w5"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error   t value   Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost -0.1654473 0.08400111 -1.969584 0.04929695
+                                 CI Lower      CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.330384 -0.0005106266 671
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.042
+Std. Error: 0.061
+CI Lower: -0.162
+CI Upper: 0.078
+Lasso covariates, Adj R2 = 0.509
+Covariates: party7 + ideo + diet_mean_pre
+N = 661
+All covariates, Adj R2 = 0.552
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 438
+> compute_proportion_missing_covars(itt)
+2.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.167 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre
+0.121 (11.0% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H2b: Trust in Fox News")
+H2b: Trust in Fox News & -0.165 (0.084) & -0.042 (0.061) & -0.205 (0.288) & 0.121\\ 
+(HuffPost) & [-0.330, -0.001] & [-0.162, 0.078] & [-0.772, 0.362] & ($d$=0.110)\\
+> 
+> 
+> ########################################################
+> ### Media Trust RQ1
+> ########################################################
+> 
+> # H1a
+> heterogeneous_effect(dv = "trust_fox_w5", 
++                      moderator = "party7", trt = "FoxNews")
+Lasso covariates, Adj R2 = 0.497
+Covariates: party7 + ideo + diet_mean_pre
+N = 663
+All covariates, Adj R2 = 0.526
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "trust_fox_w5", 
++                      moderator = "ideo", trt = "FoxNews")
+Lasso covariates, Adj R2 = 0.497
+Covariates: party7 + ideo + diet_mean_pre
+N = 663
+All covariates, Adj R2 = 0.526
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 436
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H1b
+> heterogeneous_effect(dv = "trust_hp_w5", 
++                      moderator = "party7", trt = "FoxNews")
+Lasso covariates, Adj R2 = 0.347
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.393
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 434
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "trust_hp_w5", 
++                      moderator = "ideo", trt = "FoxNews")
+Lasso covariates, Adj R2 = 0.347
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.393
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 434
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H2a
+> heterogeneous_effect(dv = "trust_hp_w5", 
++                      moderator = "party7", trt = "HuffPost")
+Lasso covariates, Adj R2 = 0.353
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.397
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "trust_hp_w5", 
++                      moderator = "ideo", trt = "HuffPost")
+Lasso covariates, Adj R2 = 0.353
+Covariates: party7 + ideo + diet_mean_pre
+N = 658
+All covariates, Adj R2 = 0.397
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> # H2b
+> heterogeneous_effect(dv = "trust_fox_w5", 
++                      moderator = "party7", trt = "HuffPost")
+Lasso covariates, Adj R2 = 0.509
+Covariates: party7 + ideo + diet_mean_pre
+N = 661
+All covariates, Adj R2 = 0.552
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 438
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "trust_fox_w5", 
++                      moderator = "ideo", trt = "HuffPost")
+Lasso covariates, Adj R2 = 0.509
+Covariates: party7 + ideo + diet_mean_pre
+N = 661
+All covariates, Adj R2 = 0.552
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 438
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> 
+> ########################################################
+> ### Media Trust H4a: Media trust for FN group (w7)
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "trust_w7"
+> D <- "comp_fn"
+> 
+> # svy$trust_w7 <- zap_labels(svy$trust_w7)
+> 
+> # resetting after het fx analysis
+> vars <- c("party7", "age", "agesq", "female", "raceeth", "educ",
++           "ideo", "income", "employ", "state", "polint", "freq_tv", "freq_np", 
++           "freq_rad", "freq_net", "freq_disc", "log_news_pre", "diet_mean_pre")
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error  t value Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.09930171 0.07926951 -1.25271 0.210779
+                                 CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.2549681 0.05636465 626
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.132
+Std. Error: 0.058
+CI Lower: -0.245
+CI Upper: -0.019
+Lasso covariates, Adj R2 = 0.496
+Covariates: party7 + agesq + ideo + freq_tv + freq_np + diet_mean_pre
+N = 617
+All covariates, Adj R2 = 0.503
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+> compute_proportion_missing_covars(itt)
+3.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.157 (15.7% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + agesq + ideo + freq_tv + freq_np + diet_mean_pre
+0.115 (11.5% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4a: Media trust (W7)")
+H4a: Media trust (W7) & -0.099 (0.079) & -0.132 (0.058) & -0.562 (0.261) & 0.115\\ 
+(FoxNews) & [-0.255, 0.056] & [-0.245, -0.019] & [-1.074, -0.049] & ($d$=0.115)\\
+> 
+> ########################################################
+> ### Media Trust H4b: Media trust for HP group (w7)
+> ########################################################
+> 
+> svy$trust_w7 <- svy$trust_w7/sd(svy$trust_w7[which(svy$W3_PATA306_treatment_w3 == "Control")], na.rm = TRUE)
+> 
+> trt <- "HuffPost"
+> dv <- "trust_w7"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                   Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost -0.04723691 0.07645368 -0.6178501 0.5368953
+                                  CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.1973691 0.1028952 636
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.159
+Std. Error: 0.057
+CI Lower: -0.272
+CI Upper: -0.047
+Lasso covariates, Adj R2 = 0.472
+Covariates: party7 + agesq + ideo + freq_tv + freq_np + diet_mean_pre
+N = 619
+All covariates, Adj R2 = 0.486
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+> compute_proportion_missing_covars(itt)
+3.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.151 (15.6% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + agesq + ideo + freq_tv + freq_np + diet_mean_pre
+0.111 (11.5% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4b: Media trust (W7)")
+H4b: Media trust (W7) & -0.047 (0.076) & -0.159 (0.057) & -0.698 (0.266) & 0.111\\ 
+(HuffPost) & [-0.197, 0.103] & [-0.272, -0.047] & [-1.222, -0.175] & ($d$=0.115)\\
+> 
+> 
+> 
+> ########################################################
+> ### Factual knowledge RQ1a: news reception for HP group
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "event_mokken_w5"
+> dv_pre <- "event_pre_mokken"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                 Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.0445877 0.05523444 0.8072446 0.4198108
+                                   CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.06386485 0.1530403 673
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt, dv_pre = dv_pre)
+Estimate: 0.025
+Std. Error: 0.052
+CI Lower: -0.078
+CI Upper: 0.128
+Pre-treatment DV, Adj R2 = 0.073
+N = 685
+Lasso covariates, Adj R2 = 0.118
+Covariates: educ + polint + event_pre_mokken
+N = 660
+All covariates, Adj R2 = 0.109
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+> compute_proportion_missing_covars(itt)
+3.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.113 (15.1% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + educ + polint + event_pre_mokken
+0.106 (14.2% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "RQ1a: Event knowledge")
+RQ1a: Event knowledge & 0.045 (0.055) & 0.025 (0.052) & 0.159 (0.232) & 0.106\\ 
+(HuffPost) & [-0.064, 0.153] & [-0.078, 0.128] & [-0.296, 0.614] & ($d$=0.142)\\
+> 
+> ########################################################
+> ### Factual knowledge RQ1b: news reception for FN group
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "event_mokken_w5"
+> dv_pre <- "event_pre_mokken"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.02051133 0.05895318 -0.3479257 0.7280056
+                                 CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1362672 0.09524452 668
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt, dv_pre = dv_pre)
+Estimate: -0.037
+Std. Error: 0.055
+CI Lower: -0.146
+CI Upper: 0.071
+Pre-treatment DV, Adj R2 = 0.129
+N = 680
+Lasso covariates, Adj R2 = 0.157
+Covariates: educ + polint + event_pre_mokken
+N = 650
+All covariates, Adj R2 = 0.187
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+> compute_proportion_missing_covars(itt)
+3.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.113 (15.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + educ + polint + event_pre_mokken
+0.107 (14.3% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "RQ1b: Event knowledge")
+RQ1b: Event knowledge & -0.021 (0.059) & -0.037 (0.055) & -0.149 (0.218) & 0.107\\ 
+(FoxNews) & [-0.136, 0.095] & [-0.146, 0.071] & [-0.578, 0.280] & ($d$=0.143)\\
+> 
+> # RQ1a
+> heterogeneous_effect(dv = "event_mokken_w5", dv_pre = "event_pre_mokken",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.073
+N = 685
+Lasso covariates, Adj R2 = 0.118
+Covariates: educ + polint + event_pre_mokken
+N = 660
+All covariates, Adj R2 = 0.109
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "event_mokken_w5", dv_pre = "event_pre_mokken",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.073
+N = 685
+Lasso covariates, Adj R2 = 0.118
+Covariates: educ + polint + event_pre_mokken
+N = 660
+All covariates, Adj R2 = 0.109
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 440
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> # RQ1b
+> heterogeneous_effect(dv = "event_mokken_w5", dv_pre = "event_pre_mokken",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.129
+N = 680
+Lasso covariates, Adj R2 = 0.157
+Covariates: educ + polint + event_pre_mokken
+N = 650
+All covariates, Adj R2 = 0.187
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "event_mokken_w5", dv_pre = "event_pre_mokken",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.129
+N = 680
+Lasso covariates, Adj R2 = 0.157
+Covariates: educ + polint + event_pre_mokken
+N = 650
+All covariates, Adj R2 = 0.187
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 437
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> 
+> 
+> #### WAVE 7 ####
+> 
+> ########################################################
+> ### Issue H1: issue opinions, Fox News treatment (w7)
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "issue_scale_w7"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                   Estimate Std. Error     t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.006952037 0.08694921 -0.07995515 0.9363038
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1777685 0.1638644 518
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: -0.017
+Std. Error: 0.039
+CI Lower: -0.093
+CI Upper: 0.059
+Pre-treatment DV, Adj R2 = 0.794
+N = 530
+Lasso covariates, Adj R2 = 0.807
+Covariates: party7 + ideo + issue_scale_pre
+N = 522
+All covariates, Adj R2 = 0.814
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 358
+> compute_proportion_missing_covars(itt)
+1.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.172 (17.2% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre
+0.076 (7.6% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1: Conservatism")
+H1: Conservatism & -0.007 (0.087) & -0.017 (0.039) & -0.121 (0.178) & 0.076\\ 
+(FoxNews) & [-0.178, 0.164] & [-0.093, 0.059] & [-0.471, 0.230] & ($d$=0.076)\\
+> 
+> ########################################################
+> ### Issue H2: issue opinions, HuffPost treatment (w7)
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "issue_scale_w7"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                   Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost -0.03746023 0.08779504 -0.4266782 0.6697917
+                                  CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.2099399 0.1350195 516
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.027
+Std. Error: 0.038
+CI Lower: -0.048
+CI Upper: 0.102
+Pre-treatment DV, Adj R2 = 0.791
+N = 528
+Lasso covariates, Adj R2 = 0.810
+Covariates: party7 + ideo + issue_scale_pre
+N = 515
+All covariates, Adj R2 = 0.810
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 351
+> compute_proportion_missing_covars(itt)
+1.9% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.172 (17.3% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + issue_scale_pre
+0.077 (7.7% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H2: Conservatism")
+H2: Conservatism & -0.037 (0.088) & 0.027 (0.038) & 0.041 (0.162) & 0.077\\ 
+(HuffPost) & [-0.210, 0.135] & [-0.048, 0.102] & [-0.278, 0.361] & ($d$=0.077)\\
+> 
+> ########################################################
+> ### Issue H3: immigration attitudes, FoxNews treatment (w7)
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "imm_issue_scale_w7"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                 Estimate Std. Error   t value  Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews 0.03608358 0.07897414 0.4569037 0.6478987
+                                 CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.1190027 0.1911699 626
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, more_vars = "policy14_imm_pre")
+Estimate: -0.014
+Std. Error: 0.034
+CI Lower: -0.082
+CI Upper: 0.053
+Pre-treatment DV, Adj R2 = 0.427
+N = 638
+Lasso covariates, Adj R2 = 0.821
+Covariates: party7 + ideo + freq_net + diet_mean_pre + issue_scale_pre + policy14_imm_pre
+N = 618
+All covariates, Adj R2 = 0.622
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+> compute_proportion_missing_covars(itt)
+3.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.156 (15.7% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + freq_net + diet_mean_pre + issue_scale_pre + policy14_imm_pre
+0.067 (6.8% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H3: Pro-immigration")
+H3: Pro-immigration & 0.036 (0.079) & -0.014 (0.034) & 0.020 (0.152) & 0.067\\ 
+(FoxNews) & [-0.119, 0.191] & [-0.082, 0.053] & [-0.280, 0.319] & ($d$=0.068)\\
+> 
+> ########################################################
+> ### Issue H4: immigration attitudes, HuffPost treatment (w7)
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "imm_issue_scale_w7"
+> dv_pre <- "issue_scale_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                 Estimate Std. Error  t value   Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.1353519 0.07790384 1.737423 0.08279662
+                                   CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.01762792 0.2883318 636
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt, more_vars = "policy14_imm_pre")
+Estimate: -0.020
+Std. Error: 0.035
+CI Lower: -0.088
+CI Upper: 0.048
+Pre-treatment DV, Adj R2 = 0.469
+N = 648
+Lasso covariates, Adj R2 = 0.819
+Covariates: party7 + ideo + freq_net + diet_mean_pre + issue_scale_pre + policy14_imm_pre
+N = 621
+All covariates, Adj R2 = 0.646
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+> compute_proportion_missing_covars(itt)
+3.8% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.155 (15.6% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + freq_net + diet_mean_pre + issue_scale_pre + policy14_imm_pre
+0.067 (6.8% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4: Pro-immigration")
+H4: Pro-immigration & 0.135 (0.078) & -0.020 (0.035) & -0.103 (0.160) & 0.067\\ 
+(HuffPost) & [-0.018, 0.288] & [-0.088, 0.048] & [-0.417, 0.212] & ($d$=0.068)\\
+> 
+> ########################################################
+> ### Issue RQ1: heterogeneous treatment effects (w7)
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.794
+N = 530
+Lasso covariates, Adj R2 = 0.807
+Covariates: party7 + ideo + issue_scale_pre
+N = 522
+All covariates, Adj R2 = 0.814
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 358
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.794
+N = 530
+Lasso covariates, Adj R2 = 0.807
+Covariates: party7 + ideo + issue_scale_pre
+N = 522
+All covariates, Adj R2 = 0.814
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 358
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H2
+> heterogeneous_effect(dv = "issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.791
+N = 528
+Lasso covariates, Adj R2 = 0.810
+Covariates: party7 + ideo + issue_scale_pre
+N = 515
+All covariates, Adj R2 = 0.810
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 351
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.791
+N = 528
+Lasso covariates, Adj R2 = 0.810
+Covariates: party7 + ideo + issue_scale_pre
+N = 515
+All covariates, Adj R2 = 0.810
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 351
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> # H3
+> heterogeneous_effect(dv = "imm_issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.427
+N = 638
+Lasso covariates, Adj R2 = 0.598
+Covariates: party7 + ideo + freq_net + issue_scale_pre
+N = 618
+All covariates, Adj R2 = 0.622
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "imm_issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.427
+N = 638
+Lasso covariates, Adj R2 = 0.598
+Covariates: party7 + ideo + freq_net + issue_scale_pre
+N = 618
+All covariates, Adj R2 = 0.622
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H4
+> heterogeneous_effect(dv = "imm_issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.469
+N = 648
+Lasso covariates, Adj R2 = 0.638
+Covariates: party7 + ideo + freq_net + issue_scale_pre
+N = 621
+All covariates, Adj R2 = 0.646
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "imm_issue_scale_w7", dv_pre = "issue_scale_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.469
+N = 648
+Lasso covariates, Adj R2 = 0.638
+Covariates: party7 + ideo + freq_net + issue_scale_pre
+N = 621
+All covariates, Adj R2 = 0.646
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 416
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> 
+> 
+> ########################################################
+> ### Agenda H1: FoxNews treatment (w8)
+> ########################################################
+> 
+> trt <- "FoxNews"
+> dv <- "agenda_lean_w8"
+> dv_pre <- "agenda_lean_pre"
+> D <- "comp_fn"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                               Estimate Std. Error   t value Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews 0.010131    0.01642 0.6169916 0.537469
+                                  CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.02211517 0.04237717 614
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.013
+Std. Error: 0.009
+CI Lower: -0.005
+CI Upper: 0.030
+Pre-treatment DV, Adj R2 = 0.648
+N = 626
+Lasso covariates, Adj R2 = 0.713
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 613
+All covariates, Adj R2 = 0.727
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+> compute_proportion_missing_covars(itt)
+2.6% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.033 (15.9% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre + agenda_lean_pre
+0.017 (8.5% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H1: Agenda setting")
+H1: Agenda setting & 0.010 (0.016) & 0.013 (0.009) & 0.091 (0.044) & 0.017\\ 
+(FoxNews) & [-0.022, 0.042] & [-0.005, 0.030] & [0.005, 0.178] & ($d$=0.085)\\
+> 
+> ########################################################
+> ### Agenda H2: HuffPost treatment (w8)
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "agenda_lean_w8"
+> dv_pre <- "agenda_lean_pre"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error  t value   Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.02879915 0.01619772 1.777975 0.07590761
+                                    CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.003011125 0.06060942 608
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, dv_pre = dv_pre, trt = trt)
+Estimate: 0.005
+Std. Error: 0.009
+CI Lower: -0.013
+CI Upper: 0.023
+Pre-treatment DV, Adj R2 = 0.663
+N = 620
+Lasso covariates, Adj R2 = 0.714
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 601
+All covariates, Adj R2 = 0.725
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 391
+> compute_proportion_missing_covars(itt)
+2.6% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.033 (15.9% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + diet_mean_pre + agenda_lean_pre
+0.018 (8.6% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace,  trt, pwr,
++               dv = "H2: Agenda setting")
+H2: Agenda setting & 0.029 (0.016) & 0.005 (0.009) & 0.028 (0.039) & 0.018\\ 
+(HuffPost) & [-0.003, 0.061] & [-0.013, 0.023] & [-0.050, 0.105] & ($d$=0.086)\\
+> 
+> ########################################################
+> ### Agenda RQ1: heterogeneous treatment effects by party ID / ideology (w8)
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "agenda_lean_pre",
++                      moderator = "party7", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.648
+N = 626
+Lasso covariates, Adj R2 = 0.713
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 613
+All covariates, Adj R2 = 0.727
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+W3_PATA306_treatment_w3FoxNews:party7_c 
+                                 "n.s." 
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "agenda_lean_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.648
+N = 626
+Lasso covariates, Adj R2 = 0.713
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 613
+All covariates, Adj R2 = 0.727
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> 
+> # H2
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "agenda_lean_pre",
++                      moderator = "party7", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.663
+N = 620
+Lasso covariates, Adj R2 = 0.714
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 601
+All covariates, Adj R2 = 0.725
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 391
+W3_PATA306_treatment_w3HuffPost:party7_c 
+                                  "n.s." 
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "agenda_lean_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.663
+N = 620
+Lasso covariates, Adj R2 = 0.714
+Covariates: party7 + ideo + diet_mean_pre + agenda_lean_pre
+N = 601
+All covariates, Adj R2 = 0.725
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 391
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> ########################################################
+> ### Agenda RQ2: heterogeneous treatment effects by pre-treatment habits (w8)
+> ########################################################
+> 
+> # H1
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "log_fn_pre",
++                      moderator = "ideo", trt = "FoxNews")
+Pre-treatment DV, Adj R2 = 0.106
+N = 489
+Lasso covariates, Adj R2 = 0.556
+Covariates: party7 + ideo + diet_mean_pre
+N = 613
+All covariates, Adj R2 = 0.602
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 403
+W3_PATA306_treatment_w3FoxNews:ideo_c 
+                               "n.s." 
+> # H2
+> heterogeneous_effect(dv = "agenda_lean_w8", dv_pre = "log_hp_pre",
++                      moderator = "ideo", trt = "HuffPost")
+Pre-treatment DV, Adj R2 = 0.040
+N = 479
+Lasso covariates, Adj R2 = 0.582
+Covariates: party7 + ideo + diet_mean_pre
+N = 601
+All covariates, Adj R2 = 0.595
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 391
+W3_PATA306_treatment_w3HuffPost:ideo_c 
+                                "n.s." 
+> 
+> 
+> 
+> 
+> ########################################################
+> ### Media Trust H4a: Media trust for FN group (w8)
+> ########################################################
+> 
+> svy$trust_w8 <- svy$trust_w8/sd(svy$trust_w8[which(svy$W3_PATA306_treatment_w3 == "Control")], na.rm = TRUE)
+> 
+> trt <- "FoxNews"
+> dv <- "trust_w8"
+> D <- "comp_fn"
+> 
+> # svy$trust_w8 <- zap_labels(svy$trust_w8)
+> 
+> # resetting after het fx analysis
+> vars <- c("party7", "age", "agesq", "female", "raceeth", "educ",
++           "ideo", "income", "employ", "state", "polint", "freq_tv", "freq_np", 
++           "freq_rad", "freq_net", "freq_disc", "log_news_pre", "diet_mean_pre")
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                  Estimate Std. Error    t value Pr(>|t|)
+W3_PATA306_treatment_w3FoxNews -0.07760902 0.07796273 -0.9954631 0.319902
+                                CI Lower   CI Upper  DF
+W3_PATA306_treatment_w3FoxNews -0.230714 0.07549595 616
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.086
+Std. Error: 0.054
+CI Lower: -0.193
+CI Upper: 0.020
+Lasso covariates, Adj R2 = 0.536
+Covariates: party7 + ideo + freq_np + diet_mean_pre
+N = 610
+All covariates, Adj R2 = 0.565
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 405
+> compute_proportion_missing_covars(itt)
+3.5% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.153 (15.8% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + freq_np + diet_mean_pre
+0.108 (11.2% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4a: Media trust (W8)")
+H4a: Media trust (W8) & -0.078 (0.078) & -0.086 (0.054) & -0.485 (0.253) & 0.108\\ 
+(FoxNews) & [-0.231, 0.075] & [-0.193, 0.020] & [-0.982, 0.012] & ($d$=0.112)\\
+> 
+> ########################################################
+> ### Media Trust H4b: Media trust for HP group (w8)
+> ########################################################
+> 
+> trt <- "HuffPost"
+> dv <- "trust_w8"
+> D <- "comp_hp"
+> 
+> ## DIM
+> (dim <- difference_in_means(formula(paste0(dv, " ~ W3_PATA306_treatment_w3")), 
++                             blocks = W3_Browser_treatment_w3, 
++                             data = svy, 
++                             condition1 = "Control", 
++                             condition2 = trt))
+Design:  Blocked 
+                                   Estimate Std. Error    t value  Pr(>|t|)
+W3_PATA306_treatment_w3HuffPost 0.001145906 0.07796746 0.01469724 0.9882785
+                                  CI Lower  CI Upper  DF
+W3_PATA306_treatment_w3HuffPost -0.1519708 0.1542626 611
+> ## ITT, with Lin's covariate adjustment
+> itt <- run_model(dv = dv, trt = trt)
+Estimate: -0.099
+Std. Error: 0.057
+CI Lower: -0.212
+CI Upper: 0.013
+Lasso covariates, Adj R2 = 0.506
+Covariates: party7 + ideo + freq_np + diet_mean_pre
+N = 599
+All covariates, Adj R2 = 0.527
+Covariates: party7 + age + agesq + female + raceeth + educ + ideo + income + employ + state + polint + freq_tv + freq_np + freq_rad + freq_net + freq_disc + log_news_pre + diet_mean_pre
+N = 394
+> compute_proportion_missing_covars(itt)
+3.5% missing
+> ## CACE
+> cace <- estimate_cace(Y=dv, D = D, Z = "W3_PATA306_treatment_w3",
++                       X = extract_covariates(itt), trt=trt)
+> 
+> # power analysis
+> pwr <- power2(dv, dim, itt, cace, covariates = TRUE, D = D, trt = trt)
+MDE without covariate adjustment:
+0.154 (15.9% of a 1-SD increase in DV)
+MDE with covariate adjustment:
+Covariates:  ~ W3_Browser_treatment_w3 + party7 + ideo + freq_np + diet_mean_pre
+0.109 (11.3% of a 1-SD increase in DV)
+> 
+> format_latex2(dim, itt, cace, trt, pwr,
++               dv = "H4b: Media trust (W8)")
+H4b: Media trust (W8) & 0.001 (0.078) & -0.099 (0.057) & -0.536 (0.253) & 0.109\\ 
+(HuffPost) & [-0.152, 0.154] & [-0.212, 0.013] & [-1.034, -0.037] & ($d$=0.113)\\
+> 
+> proc.time()
+   user  system elapsed 
+ 10.532   0.625  11.205 

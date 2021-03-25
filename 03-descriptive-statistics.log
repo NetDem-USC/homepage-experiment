@@ -1,0 +1,455 @@
+
+R version 4.0.2 (2020-06-22) -- "Taking Off Again"
+Copyright (C) 2020 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin17.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> #===============================================================================
+> #  File:    03-descriptive-statistics.R
+> #  Date:    Feb 3, 2021
+> #  Purpose: replicate appendix analyses: panel attrition, issue scaling, agenda
+> #            setting, and compiling descriptive statistics
+> #  Data In: 
+> #           ./data/survey_data.csv
+> #           ./data/daily_pulse_data.csv
+> #===============================================================================
+> 
+> # PACKAGES
+> #===============================================================================
+> library(readr)
+> library(tidyverse)
+── Attaching packages ─────────────────────────────────────── tidyverse 1.3.0 ──
+✔ ggplot2 3.3.2     ✔ dplyr   1.0.3
+✔ tibble  3.0.6     ✔ stringr 1.4.0
+✔ tidyr   1.1.2     ✔ forcats 0.5.1
+✔ purrr   0.3.4     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+> library(estimatr)
+> library(ggplot2)
+> library(psych)
+
+Attaching package: ‘psych’
+
+The following objects are masked from ‘package:ggplot2’:
+
+    %+%, alpha
+
+> library(haven)
+> # devtools::install_github("hofnerb/papeR")
+> library(papeR)
+Loading required package: car
+Loading required package: carData
+
+Attaching package: ‘car’
+
+The following object is masked from ‘package:psych’:
+
+    logit
+
+The following object is masked from ‘package:dplyr’:
+
+    recode
+
+The following object is masked from ‘package:purrr’:
+
+    some
+
+Loading required package: xtable
+
+Attaching package: ‘xtable’
+
+The following object is masked _by_ ‘.GlobalEnv’:
+
+    display
+
+Registered S3 method overwritten by 'papeR':
+  method    from
+  Anova.lme car 
+
+Attaching package: ‘papeR’
+
+The following objects are masked from ‘package:dplyr’:
+
+    summarise, summarize
+
+The following object is masked from ‘package:utils’:
+
+    toLatex
+
+> source('code/functions.r')
+> 
+> # DATA
+> #===============================================================================
+> pulse <- read_csv("data/daily_pulse_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  date = col_date(format = "")
+)
+ℹ Use `spec()` for the full column specifications.
+
+> svy <- read_csv("data/survey_data.csv")
+
+── Column specification ────────────────────────────────────────────────────────
+cols(
+  .default = col_double(),
+  id = col_character(),
+  partylean = col_character(),
+  raceeth = col_character(),
+  employ = col_character(),
+  W1_endtime = col_datetime(format = ""),
+  W2_endtime = col_datetime(format = ""),
+  W3_PATA306_treatment_w3 = col_character(),
+  W3_Browser_treatment_w3 = col_character(),
+  starttime_w3 = col_datetime(format = ""),
+  endtime_w3 = col_datetime(format = ""),
+  endtime = col_datetime(format = ""),
+  W5_endtime = col_datetime(format = ""),
+  W6_endtime = col_datetime(format = ""),
+  endtime_w7 = col_datetime(format = ""),
+  endtime_w8 = col_datetime(format = ""),
+  predicted_house_winner_gop = col_logical(),
+  predicted_district_winner_gop = col_logical(),
+  predicted_house_winner_dem = col_logical(),
+  predicted_district_winner_dem = col_logical()
+)
+ℹ Use `spec()` for the full column specifications.
+
+> 
+> # FIGURE 2: PANEL ATTRITION
+> #===============================================================================
+> 
+> # completes
+> cmp <- list()
+> w1_extra <- rep(TRUE, 212)
+> 
+> cmp[[1]] <- c(!is.na(svy$W1_endtime), w1_extra)
+> cmp[[2]] <- c(!is.na(svy$W2_endtime), !w1_extra)
+> cmp[[3]] <- c(!is.na(svy$endtime_w3), !w1_extra)
+> cmp[[4]] <- c(!is.na(svy$endtime), !w1_extra)
+> cmp[[5]] <- c(!is.na(svy$W5_endtime), !w1_extra)
+> cmp[[6]] <- c(!is.na(svy$W6_endtime), !w1_extra)
+> cmp[[7]] <- c(!is.na(svy$endtime_w7), !w1_extra)
+> cmp[[8]] <- c(!is.na(svy$endtime_w8), !w1_extra)
+> 
+> # how many completed waves 2, 3, 4?
+> (tab <- table(cmp[[2]] & cmp[[3]] & cmp[[4]]))
+
+FALSE  TRUE 
+  514  1037 
+> (1339 - 1037)/1339
+[1] 0.2255414
+> 
+> res <- expand.grid(x = 1:8, y = 1:8, n = NA, mis = NA)
+> 
+> for (i in 1:8){
++   for (j in 1:8){
++     sl <- which(res$x==i & res$y==j)
++     if (i == j){
++       res$n[sl] <- sum(cmp[[i]])
++       res$mis[sl] <- 1 - mean(cmp[[i]])
++     }
++     if (i != j){
++       xy <- cmp[[i]][ cmp[[j]] ]
++       res$n[sl] <- sum(xy)
++       res$mis[sl] <- 1 - mean(xy)
++     }
++   }
++   
++ }
+> res$label <- paste0(res$n, "\n(", display(res$mis, pct=TRUE), "%)")
+> res$label[res$x==res$y] <- paste0("N=", res$n[res$x==res$y])
+> 
+> p <- ggplot(res[res$x>=res$y,], aes(x=x, y=y, fill=mis))
+> pq <- p + geom_tile() + theme_linedraw() +
++   geom_text(aes(label=label), color="white", size=5) +
++   scale_fill_continuous("% attrition", 
++                         labels=scales::percent_format(accuracy=1)) +
++   scale_x_continuous("Respondent wave of comparison",
++                      breaks=1:8, expand=c(0,0)) +
++   scale_y_continuous("Respondent's first wave", breaks=1:8,
++                      expand=c(0,0)) +
++   theme(panel.grid = element_blank(),
++         panel.border = element_blank())
+> pq
+> 
+> ggsave(pq, file="graphs/appendix_fig2.pdf", width=10, height=6)
+> ggsave(pq, file="graphs/appendix_fig2.png", width=10, height=6)
+> 
+> 
+> # TABLE 4: ISSUE OPINIONS SCALE
+> #===============================================================================
+> 
+> psych::principal(svy %>% dplyr::select("policy1_gc_pre", "policy3_nafta_pre", "policy4_pp_pre", 
++                                              "policy5_biz1_pre", "policy6_iso_pre", "policy8_biz2_pre", "policy7_ss",
++                                              "policy9_nk_pre", "policy10_harass_pre", "policy11_islam_pre", "policy12_cc_pre", 
++                                              "policy13_fbi_pre", "policy14_imm_pre"), 
++                  nfactors = 2, rotate = "varimax", missing=TRUE, impute = "mean")$loadings
+
+Loadings:
+                    RC1    RC2   
+policy1_gc_pre       0.805 -0.248
+policy3_nafta_pre    0.695 -0.201
+policy4_pp_pre      -0.527  0.532
+policy5_biz1_pre     0.670 -0.228
+policy6_iso_pre     -0.399  0.591
+policy8_biz2_pre     0.706       
+policy7_ss          -0.587  0.480
+policy9_nk_pre       0.196  0.795
+policy10_harass_pre  0.712       
+policy11_islam_pre  -0.529  0.531
+policy12_cc_pre      0.799 -0.312
+policy13_fbi_pre    -0.743  0.408
+policy14_imm_pre    -0.594  0.547
+
+                 RC1   RC2
+SS loadings    5.229 2.497
+Proportion Var 0.402 0.192
+Cumulative Var 0.402 0.594
+> 
+> 
+> # TABLE 5: IMMIGRATION SCALE
+> #===============================================================================
+> 
+> principal(filter(svy, W3_PATA306_treatment_w3 == "Control") %>% 
++                    dplyr::select(policy14_imm, imm2, imm3), 
++           nfactors = 2, rotate = "varimax")$loadings
+
+Loadings:
+             RC1    RC2   
+policy14_imm  0.870 -0.380
+imm2          0.817 -0.453
+imm3         -0.409  0.911
+
+                 RC1   RC2
+SS loadings    1.591 1.181
+Proportion Var 0.530 0.394
+Cumulative Var 0.530 0.924
+> 
+> 
+> # FIGURE 5: AGENDA-SETTING
+> #===============================================================================
+> 
+> # agenda setting
+> agendas <- array(NA, 21)
+> for(i in 1:21) {
++   tmp <- as.numeric(gsub(2, 1, (as.numeric(gsub(2, 0, 
++               get(paste0("W2_PATA2_1_m_", i), svy))) + 
++                 as.numeric(gsub(2, 0, get(paste0("W3_PATA300_", i, "_w3"), svy))))))
++   agendas[i] <- mean(tmp[which(svy$partylean == "Democrat")], na.rm = TRUE) - 
++     mean(tmp[which(svy$partylean == "Republican")], na.rm = TRUE)
++ }
+> 
+> df <- data.frame(
++   topics = c("Economy/unemployment", "Relationship with North Korea",
++              "Relationship with Western countries", "Intl trade imbalances",
++              "Immigration", "Terrorism", "Inequality",
++              "Racism", "Morality and values", "Health care",
++              "Crime", "Islam", "Fake news", "Political polarization",
++              "Donald Trump and his administration", "Gun control",
++              "Women's rights", "Identity politics", "Alt-right movement",
++              "Black Lives Matter", "Free speech"),
++   lean = agendas,
++   color = ifelse(agendas>0, "blue", "red")
++ )
+> df <- df[order(df$lean),]
+> df$topics <- factor(df$topics, levels=df$topics)
+> 
+> p <- ggplot(df, aes(x=topics, y=lean, fill=color))
+> pq <- p + geom_col() +
++   coord_flip() +
++   scale_fill_manual(values=c("blue", "red")) +
++   theme_minimal() +
++   geom_text(data=df[df$lean>0,],
++             aes(label=topics, x=topics, y=-0.01), hjust=1, size=3) +
++   geom_text(data=df[df$lean<0,],
++             aes(label=topics, x=topics, y=0.01), hjust=0, size=3) +
++   theme(axis.title.y = element_blank(),
++         axis.text.y = element_blank(),
++         legend.position="none", 
++         panel.grid.major.y = element_blank()) +
++   scale_y_continuous("Partisan asymmetry in agenda setting, by topic")
+> pq
+> 
+> ggsave(pq, file="graphs/appendix_fig5.pdf", width=10, height=4)
+> ggsave(pq, file="graphs/appendix_fig5.png", width=10, height=4)
+> 
+> 
+> # TABLE 6: DESCRIPTIVE STATISTICS
+> #===============================================================================
+> 
+> # Dropping observations where treatment is missing
+> svy <- svy[!is.na(svy$W3_PATA306_treatment_w3),]
+> 
+> svy$age_labels <- cut(svy$age, breaks = c(min(svy$age, na.rm = TRUE), 29, 44, 59, 
++                                    max(svy$age, na.rm = TRUE)), 
++                labels = rev(c("60+", "45-59", "30-44", "18-29")), 
++                include.lowest = TRUE, right = TRUE)
+> svy$pid3 <- as_factor(svy$W1_pid3)
+> svy$gender <- as_factor(svy$W1_gender)
+> svy$educ_factor <- as_factor(svy$W1_educ)
+> svy$raceeth <- as_factor(svy$raceeth)
+> 
+> print.xtable(xtable(papeR::summarize(svy, 
++       variable.labels = c("Party ID", "Gender", "Race", "Education level", "Age group"),
++       type = "factor", 
++       variables = c("pid3", "gender", "raceeth", "educ_factor", "age_labels"))), 
++       include.rownames = FALSE, hline.after = c(3, 5, 9, 15), 
++     only.contents = TRUE, include.colnames = FALSE)
+% latex table generated in R 4.0.2 by xtable 1.8-4 package
+% Tue Mar  9 15:22:48 2021
+ Party ID & 1 &  & 416 & 37.9 \\ 
+   & 2 &  & 285 & 26.0 \\ 
+   & 3 &  & 334 & 30.4 \\ 
+   \hline
+ & 4 &  &  51 & 4.6 \\ 
+   & 5 &  &  12 & 1.1 \\ 
+   \hline
+Gender & 1 &  & 535 & 48.7 \\ 
+   & 2 &  & 563 & 51.3 \\ 
+  Race & Asian / other &  &  69 & 6.3 \\ 
+   & White &  & 896 & 81.6 \\ 
+   \hline
+ & Black &  &  84 & 7.7 \\ 
+   & Hispanic &  &  49 & 4.5 \\ 
+  Education level & 1 &  &  17 & 1.5 \\ 
+   & 2 &  & 162 & 14.8 \\ 
+   & 3 &  & 247 & 22.5 \\ 
+   & 4 &  & 157 & 14.3 \\ 
+   \hline
+ & 5 &  & 283 & 25.8 \\ 
+   & 6 &  & 232 & 21.1 \\ 
+  Age group & 18-29 &  &  58 & 5.3 \\ 
+   & 30-44 &  & 198 & 18.0 \\ 
+   & 45-59 &  & 294 & 26.8 \\ 
+   & 60+ &  & 548 & 49.9 \\ 
+  Warning message:
+In papeR::summarize(svy, variable.labels = c("Party ID", "Gender",  :
+  This is a call to papeR::summarize. If you want to use the dplyr function explizitly call dplyr::summarize() on your data.
+> 
+> # TABLES 7 & 8: COVARIATE BALANCE
+> #===============================================================================
+> 
+> # Dropping observations where treatment is missing
+> svy <- svy[!is.na(svy$W3_PATA306_treatment_w3),]
+> 
+> vars <- c("party7", "age", "agesq", "female", "raceeth", "educ",
++           "ideo", "income", "employ", "state", "polint", "freq_tv", "freq_np", 
++           "freq_rad", "freq_net", "freq_disc", "log_news_pre", "diet_mean_pre")
+> 
+> dat <- svy %>% select(W3_PATA306_treatment_w3, W3_Browser_treatment_w3, vars[1:2], vars[4], 
++                       vars[6:8], vars[12:18]) %>% 
++   filter(W3_PATA306_treatment_w3 != "HuffPost")
+> 
+> dat %>% select(-W3_PATA306_treatment_w3, -W3_Browser_treatment_w3) %>%
++   map(~ difference_in_means(.x ~ W3_PATA306_treatment_w3, blocks = W3_Browser_treatment_w3, 
++                             data = dat)) %>% map_df(tidy, .id = "var") %>% 
++   select(var, estimate, p.value) %>% knitr::kable("latex", digits = 3, 
++          caption = "Balance: Fox News treatment vs. Control")
+\begin{table}
+
+\caption{Balance: Fox News treatment vs. Control}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+var & estimate & p.value\\
+\hline
+party7 & 0.080 & 0.616\\
+\hline
+age & -0.956 & 0.374\\
+\hline
+female & 0.034 & 0.352\\
+\hline
+educ & -0.025 & 0.806\\
+\hline
+ideo & -0.038 & 0.694\\
+\hline
+income & -0.155 & 0.524\\
+\hline
+freq\_tv & 0.112 & 0.447\\
+\hline
+freq\_np & 0.155 & 0.279\\
+\hline
+freq\_rad & 0.286 & 0.071\\
+\hline
+freq\_net & 0.015 & 0.902\\
+\hline
+freq\_disc & 0.043 & 0.740\\
+\hline
+log\_news\_pre & -0.037 & 0.824\\
+\hline
+diet\_mean\_pre & 0.014 & 0.261\\
+\hline
+\end{tabular}
+\end{table}
+> 
+> 
+> dat <- svy[svy$W3_PATA306_treatment_w3 != "FoxNews",
++            c("W3_PATA306_treatment_w3", "W3_Browser_treatment_w3", 
++              vars[1:2], vars[4], vars[6:8], vars[12:18])]
+> 
+> dat %>% select(-W3_PATA306_treatment_w3, -W3_Browser_treatment_w3) %>%
++   map(~ difference_in_means(.x ~ W3_PATA306_treatment_w3, blocks = W3_Browser_treatment_w3, 
++                             data = dat)) %>% map_df(tidy, .id = "var") %>% 
++   select(var, estimate, p.value) %>% knitr::kable("latex", digits = 3, 
++       caption = "Balance: HuffPost treatment vs. Control")
+\begin{table}
+
+\caption{Balance: HuffPost treatment vs. Control}
+\centering
+\begin{tabular}[t]{l|r|r}
+\hline
+var & estimate & p.value\\
+\hline
+party7 & -0.242 & 0.131\\
+\hline
+age & -2.295 & 0.035\\
+\hline
+female & 0.073 & 0.048\\
+\hline
+educ & -0.111 & 0.294\\
+\hline
+ideo & -0.208 & 0.034\\
+\hline
+income & -0.098 & 0.694\\
+\hline
+freq\_tv & -0.023 & 0.877\\
+\hline
+freq\_np & 0.012 & 0.935\\
+\hline
+freq\_rad & 0.013 & 0.934\\
+\hline
+freq\_net & -0.073 & 0.568\\
+\hline
+freq\_disc & -0.011 & 0.933\\
+\hline
+log\_news\_pre & 0.084 & 0.617\\
+\hline
+diet\_mean\_pre & -0.018 & 0.153\\
+\hline
+\end{tabular}
+\end{table}
+> 
+> 
+> proc.time()
+   user  system elapsed 
+  3.432   0.288   3.785 
