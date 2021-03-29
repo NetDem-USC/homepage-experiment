@@ -1,6 +1,6 @@
 # Replication materials for Guess et al (2021) PNAS
 
-Replication materials for "The consequences of online partisan media", by Andrew Guess, Pablo Barberá, Simon Munzert, and JungHwan Yang, published in the _Proceedings of the National Academy of Sciences_.
+Replication materials for "[The consequences of online partisan media](https://www.pnas.org/content/118/14/e2013464118)", by Andrew Guess, Pablo Barberá, Simon Munzert, and JungHwan Yang, published in the _Proceedings of the National Academy of Sciences_.
 
 > __Abstract:__
 > What role do ideologically extreme media play in the polarization of society? Here, we report results from a randomized longitudinal field experiment embedded in a nationally representative online panel survey (N = 1,037) in which participants were incentivized to change their browser default settings and social media following patterns, boosting the likelihood of encountering news with either a left-leaning (HuffPost) or right-leaning (Fox News) slant during the 2018 U.S. midterm election campaign. Data on approximately 19m web visits by respondents indicate that resulting changes in news consumption persisted for at least eight weeks. Greater exposure to partisan news can cause immediate but short-lived increases in website visits and knowledge of recent events. After adjusting for multiple comparisons, however, we find little evidence of a direct impact on opinions or affect. Still, results from later survey waves suggest that both treatments produce a lasting and meaningful decrease in trust in the mainstream media up to one year later. Consistent with the minimal-effects tradition, direct consequences of online partisan media are limited, though our findings raise questions about the possibility of subtle, cumulative dynamics.  The combination of experimentation and computational social science techniques illustrates a powerful new approach for studying the long-term consequences of exposure to partisan news.
@@ -10,7 +10,7 @@ Replication materials for "The consequences of online partisan media", by Andrew
 
 This README file provides an overview of the replications materials for the article. The [Data](https://github.com/NetDem-USC/homepage_experiment#data) section describes the main dataset required to reproduce the tables and figures in the paper. The [Analysis](https://github.com/NetDem-USC/homepage_experiment#code) section summarizes the purpose of each R or python script.
 
-__Note__: In compliance with YouGov's Terms of Service and IRB requirements, we do not publicly share the raw files containing the complete survey responses and URL-level web tracking data. Instead, we provide respondent-level aggregates and the subset of survey variables we use in the study, along with an anonymized panelist ID. They can be found in [Dataverse](http://dx.doi.org/ADD_LINK_WHEN_AVAILABLE). 
+__Note__: In compliance with YouGov's Terms of Service and IRB requirements, we do not publicly share the raw files containing the complete survey responses and URL-level web tracking data. Instead, we provide respondent-level aggregates and the subset of survey variables we use in the study, along with an anonymized panelist ID.
 
 ## Data
   - `data/survey_data.csv`: merged dataset with relevant variables from all seven survey waves in the study.
